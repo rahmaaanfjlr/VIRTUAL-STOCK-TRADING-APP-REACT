@@ -36,7 +36,7 @@ function PriceChart({ stock }) {
       .then(payload => {
         if (!active) return;
         const parsed = (payload.values || []).map(row => ({
-          time: Math.floor(new Date(row.datetime.replace(' ', 'T') + (row.datetime.includes('Z') ? '' : 'Z')).getTime() / 1000),
+          time: (timeframe === '1M' || timeframe === '1Y') ? row.datetime.slice(0, 10) : Math.floor(new Date(row.datetime.replace(' ', 'T') + (row.datetime.includes('Z') ? '' : 'Z')).getTime() / 1000),
           open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close),
           volume: Number(row.volume || 0)
         })).filter(row => Number.isFinite(row.time) && [row.open,row.high,row.low,row.close].every(Number.isFinite)).reverse();
