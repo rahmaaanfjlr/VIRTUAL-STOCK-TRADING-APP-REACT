@@ -14,6 +14,32 @@ const INITIAL_STOCKS = [
   { id: 10, name: "JPMorgan Chase", symbol: "JPM", price: 198.60, change: 1.80, changePercent: 0.91 }
 ];
 
+function PriceChart({ stock }) {
+  const candles = Array.from({ length: 38 }, (_, i) => {
+    const wave = Math.sin(i * 0.62) * 7 + Math.sin(i * 0.19) * 10 + (i - 18) * (stock.change >= 0 ? 0.24 : -0.18);
+    const open = 50 + wave + Math.sin(i * 1.7) * 3;
+    const close = open + Math.sin(i * 1.31 + 0.7) * 6 + (stock.change >= 0 ? 1.1 : -0.8);
+    return { x: 18 + i * 15, open, close, high: Math.max(open, close) + 2 + (i % 4), low: Math.min(open, close) - 2 - (i % 3), volume: 10 + ((i * 17) % 29) };
+  });
+  const y = value => 154 - value * 1.55;
+  return (
+    <div className="price-chart">
+      <div className="chart-topline"><span>PRICE PERFORMANCE</span><span className="chart-live"><i /> SIMULATED</span></div>
+      <svg viewBox="0 0 590 220" role="img" aria-label={`${stock.symbol} simulated candlestick chart`} className="candle-svg">
+        {[35, 75, 115, 155].map(v => <g key={v}><line x1="8" x2="575" y1={v} y2={v} className="chart-grid"/><text x="580" y={v + 3} className="chart-axis">{(stock.price * (1.12 - v / 900)).toFixed(0)}</text></g>)}
+        {candles.map((c, i) => {
+          const up = c.close >= c.open;
+          const color = up ? "#a8ef72" : "#ef786f";
+          return <g key={i}><line x1={c.x} x2={c.x} y1={y(c.high)} y2={y(c.low)} stroke={color} strokeWidth="1.3"/><rect x={c.x - 4} y={y(Math.max(c.open,c.close))} width="8" height={Math.max(3,Math.abs(y(c.open)-y(c.close)))} rx="1" fill={color}/><rect x={c.x - 4} y={184 - c.volume} width="8" height={c.volume} fill={color} opacity=".28"/></g>;
+        })}
+        <path d="M18 118 C90 105 120 136 180 102 S275 128 330 88 S425 108 485 65 S540 76 570 48" fill="none" stroke="#a8ef72" strokeWidth="1.5" opacity=".18"/>
+        <text x="12" y="211" className="chart-axis">APR 01</text><text x="275" y="211" className="chart-axis">APR 15</text><text x="515" y="211" className="chart-axis">APR 30</text>
+      </svg>
+      <div className="chart-legend"><span><i className="legend-up"/> Bullish</span><span><i className="legend-down"/> Bearish</span><span>Volume · simulated</span></div>
+    </div>
+  );
+}
+
 export default function App() {
   const [stocks, setStocks] = useState(() => JSON.parse(localStorage.getItem('stocks')) || INITIAL_STOCKS);
   const [users, setUsers] = useState(() => JSON.parse(localStorage.getItem('users')) || []);
@@ -30,7 +56,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [tradeModal, setTradeModal] = useState({ isOpen: false, type: null, stock: null });
   const [tradeQty, setTradeQty] = useState(1);
-  const [txFilter, setTxFilter] = useState('ALL');
+  const [txFilter, setTxFilter] = useState('ALL');\n  const [selectedSymbol, setSelectedSymbol] = useState('AAPL');
 
   useEffect(() => { localStorage.setItem('stocks', JSON.stringify(stocks)); }, [stocks]);
   useEffect(() => { localStorage.setItem('users', JSON.stringify(users)); }, [users]);
@@ -316,54 +342,53 @@ export default function App() {
             {currentUser && currentView === 'dashboard' && (() => {
               const stats = getPortfolioStats();
               const userTx = transactions.filter(t => t.userId === currentUser.id).slice(0, 5);
+              const featuredStock = stocks.find(s => s.symbol === selectedSymbol) || stocks[0];
+              const totalValue = currentUser.balance + stats.val;
               return (
-                <div className="space-y-8">
-                  <div className="grid grid-cols-4 gap-6">
-                    <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-md"><h3 className="text-xs text-slate-400 uppercase font-semibold tracking-wider">Wallet Balance</h3><p className="text-2xl font-bold mt-2 text-white">₹{currentUser.balance.toLocaleString('en-IN', {maximumFractionDigits:2})}</p></div>
-                    <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-md"><h3 className="text-xs text-slate-400 uppercase font-semibold tracking-wider">Portfolio Value</h3><p className="text-2xl font-bold mt-2 text-white">₹{stats.val.toLocaleString('en-IN', {maximumFractionDigits:2})}</p></div>
-                    <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-md"><h3 className="text-xs text-slate-400 uppercase font-semibold tracking-wider">Total Investment</h3><p className="text-2xl font-bold mt-2 text-white">₹{stats.inv.toLocaleString('en-IN', {maximumFractionDigits:2})}</p></div>
-                    <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-md"><h3 className="text-xs text-slate-400 uppercase font-semibold tracking-wider">Profit / Loss</h3><p className={`text-2xl font-bold mt-2 ${stats.pl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>₹{stats.pl.toLocaleString('en-IN', {maximumFractionDigits:2})}</p></div>
+                <div className="user-terminal">
+                  <div className="terminal-heading"><div><span className="eyebrow">YOUR INVESTMENT SPACE</span><h1>Good to see you, {currentUser.username}.</h1><p>Here's how your virtual portfolio is performing today.</p></div><button onClick={simulateMarket} className="market-refresh">↻ Simulate market move</button></div>
+                  <div className="portfolio-hero">
+                    <div><span className="eyebrow">TOTAL PORTFOLIO VALUE</span><div className="portfolio-total">₹{totalValue.toLocaleString('en-IN',{maximumFractionDigits:2})}</div><div className={`portfolio-change ${stats.pl >= 0 ? 'positive' : 'negative'}`}>{stats.pl >= 0 ? '↗' : '↘'} ₹{Math.abs(stats.pl).toLocaleString('en-IN',{maximumFractionDigits:2})} <span>overall unrealised P/L</span></div></div>
+                    <div className="hero-mark"><span>◈</span><small>VIRTUAL<br/>PORTFOLIO</small></div>
                   </div>
-                  <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6 shadow-md">
-                    <h2 className="text-lg font-bold mb-4 text-white">Recent Transactions</h2>
-                    <table className="w-full text-left text-sm">
-                      <thead><tr className="border-b border-slate-700 text-slate-400"><th className="pb-3">Date</th><th className="pb-3">Type</th><th className="pb-3">Symbol</th><th className="pb-3">Qty</th><th className="pb-3">Total</th></tr></thead>
-                      <tbody className="divide-y divide-slate-700/50">
-                        {userTx.length ? userTx.map(t => (
-                          <tr key={t.id} className="hover:bg-slate-700/20"><td className="py-3.5">{new Date(t.date).toLocaleDateString()}</td><td className={`py-3.5 font-bold ${t.type==='BUY'?'text-emerald-400':'text-red-400'}`}>{t.type}</td><td className="py-3.5">{t.symbol}</td><td className="py-3.5">{t.quantity}</td><td className="py-3.5">₹{t.total.toLocaleString()}</td></tr>
-                        )) : <tr><td colSpan="5" className="text-center py-6 text-slate-400">No transactions yet</td></tr>}
-                      </tbody>
-                    </table>
+                  <div className="metric-grid">
+                    <div className="metric-card"><span>AVAILABLE CASH</span><strong>₹{currentUser.balance.toLocaleString('en-IN',{maximumFractionDigits:2})}</strong><small>Ready to invest</small></div>
+                    <div className="metric-card"><span>INVESTED VALUE</span><strong>₹{stats.inv.toLocaleString('en-IN',{maximumFractionDigits:2})}</strong><small>Across your holdings</small></div>
+                    <div className="metric-card"><span>HOLDINGS VALUE</span><strong>₹{stats.val.toLocaleString('en-IN',{maximumFractionDigits:2})}</strong><small>{currentUser.portfolio.length} stocks owned</small></div>
+                    <div className="metric-card"><span>OVERALL P/L</span><strong className={stats.pl >= 0 ? 'positive' : 'negative'}>{stats.pl >= 0 ? '+' : '-'}₹{Math.abs(stats.pl).toLocaleString('en-IN',{maximumFractionDigits:2})}</strong><small>Based on simulated prices</small></div>
                   </div>
+                  <div className="terminal-columns">
+                    <section className="terminal-panel chart-panel">
+                      <div className="panel-heading"><div><span className="eyebrow">MARKET CHART</span><h2>{featuredStock.name} <small>{featuredStock.symbol}</small></h2></div><div className={featuredStock.change >= 0 ? 'positive' : 'negative'}>₹{featuredStock.price.toFixed(2)}<small className="block">{featuredStock.change >= 0 ? '+' : ''}{featuredStock.changePercent}%</small></div></div>
+                      <PriceChart stock={featuredStock}/>
+                      <div className="chart-actions"><button onClick={() => setCurrentView('market')}>Explore market ↗</button><button onClick={() => setTradeModal({isOpen:true,type:'BUY',stock:featuredStock})}>Buy {featuredStock.symbol}</button></div>
+                    </section>
+                    <section className="terminal-panel watch-panel"><div className="panel-heading"><div><span className="eyebrow">QUICK LOOK</span><h2>Market watch</h2></div><button className="text-link" onClick={() => setCurrentView('market')}>View all ↗</button></div>
+                      {stocks.slice(0,6).map(s => <button key={s.symbol} className={`watch-row ${selectedSymbol===s.symbol?'selected':''}`} onClick={() => setSelectedSymbol(s.symbol)}><span className="stock-avatar">{s.symbol.slice(0,1)}</span><span className="watch-name"><b>{s.symbol}</b><small>{s.name}</small></span><span className="watch-price">₹{s.price.toFixed(2)}<small className={s.change>=0?'positive':'negative'}>{s.change>=0?'+':''}{s.changePercent}%</small></span></button>)}
+                    </section>
+                  </div>
+                  <section className="terminal-panel holdings-panel"><div className="panel-heading"><div><span className="eyebrow">YOUR POSITIONS</span><h2>Portfolio holdings</h2></div><button className="text-link" onClick={() => setCurrentView('portfolio')}>Full portfolio ↗</button></div>
+                    {currentUser.portfolio.length ? <div className="table-scroll"><table className="terminal-table"><thead><tr><th>ASSET</th><th>SHARES</th><th>AVG. PRICE</th><th>MARKET VALUE</th><th>PROFIT / LOSS</th></tr></thead><tbody>{currentUser.portfolio.map(h=>{const st=stocks.find(s=>s.symbol===h.symbol);const price=st?st.price:h.avgPrice;const pl=(price-h.avgPrice)*h.quantity;return <tr key={h.symbol}><td><b>{h.symbol}</b><small>{h.name}</small></td><td>{h.quantity}</td><td>₹{h.avgPrice.toFixed(2)}</td><td>₹{(price*h.quantity).toLocaleString('en-IN',{maximumFractionDigits:2})}</td><td className={pl>=0?'positive':'negative'}>{pl>=0?'+':'-'}₹{Math.abs(pl).toFixed(2)}</td></tr>})}</tbody></table></div> : <div className="empty-state">Your portfolio is waiting for its first investment. <button onClick={()=>setCurrentView('market')}>Browse stocks ↗</button></div>}
+                  </section>
+                  <section className="terminal-panel holdings-panel"><div className="panel-heading"><div><span className="eyebrow">LATEST ACTIVITY</span><h2>Recent transactions</h2></div><button className="text-link" onClick={()=>setCurrentView('transactions')}>History ↗</button></div>
+                    {userTx.length ? <div className="table-scroll"><table className="terminal-table"><thead><tr><th>DATE</th><th>TYPE</th><th>STOCK</th><th>QUANTITY</th><th>TOTAL</th></tr></thead><tbody>{userTx.map(t=><tr key={t.id}><td>{new Date(t.date).toLocaleDateString()}</td><td className={t.type==='BUY'?'positive':'negative'}>{t.type}</td><td>{t.symbol}</td><td>{t.quantity}</td><td>₹{t.total.toLocaleString('en-IN')}</td></tr>)}</tbody></table></div>:<div className="empty-state">No trades yet. Your activity will appear here.</div>}
+                  </section>
                 </div>
               );
             })()}
 
             {/* MARKET VIEW */}
-            {currentUser && currentView === 'market' && (
-              <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6 shadow-md">
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-xl font-bold text-white">Simulated Market Watch</h2>
-                  <button onClick={simulateMarket} className="bg-blue-600 hover:bg-blue-700 px-5 py-2.5 rounded-xl text-sm font-semibold transition text-white shadow-md shadow-blue-600/20">Simulate Price Shift</button>
+            {currentUser && currentView === 'market' && (() => {
+              const activeStock = stocks.find(s => s.symbol === selectedSymbol) || stocks[0];
+              return <div className="user-terminal">
+                <div className="terminal-heading"><div><span className="eyebrow">EXPLORE THE MARKET</span><h1>Market overview</h1><p>Study simulated price movements and practise your trading decisions.</p></div><button onClick={simulateMarket} className="market-refresh">↻ Simulate price shift</button></div>
+                <div className="terminal-columns market-columns">
+                  <section className="terminal-panel chart-panel"><div className="panel-heading"><div><span className="eyebrow">SELECTED ASSET</span><h2>{activeStock.name} <small>{activeStock.symbol}</small></h2></div><div className="market-price">₹{activeStock.price.toFixed(2)}<small className={activeStock.change>=0?'positive':'negative'}>{activeStock.change>=0?'+':''}{activeStock.change} ({activeStock.changePercent}%)</small></div></div><PriceChart stock={activeStock}/><div className="trade-actions"><button onClick={()=>setTradeModal({isOpen:true,type:'BUY',stock:activeStock})}>Buy {activeStock.symbol}</button><button onClick={()=>setTradeModal({isOpen:true,type:'SELL',stock:activeStock})}>Sell {activeStock.symbol}</button></div></section>
+                  <section className="terminal-panel watch-panel"><div className="panel-heading"><div><span className="eyebrow">WATCHLIST</span><h2>All stocks</h2></div></div>{stocks.map(s=><button key={s.symbol} className={`watch-row ${selectedSymbol===s.symbol?'selected':''}`} onClick={()=>setSelectedSymbol(s.symbol)}><span className="stock-avatar">{s.symbol.slice(0,1)}</span><span className="watch-name"><b>{s.symbol}</b><small>{s.name}</small></span><span className="watch-price">₹{s.price.toFixed(2)}<small className={s.change>=0?'positive':'negative'}>{s.change>=0?'+':''}{s.changePercent}%</small></span></button>)}</section>
                 </div>
-                <table className="w-full text-left text-sm">
-                  <thead><tr className="border-b border-slate-700 text-slate-400"><th className="pb-3">Company</th><th className="pb-3">Price</th><th className="pb-3">Change</th><th className="pb-3">Action</th></tr></thead>
-                  <tbody className="divide-y divide-slate-700/50">
-                    {stocks.map(s => (
-                      <tr key={s.id} className="hover:bg-slate-700/20">
-                        <td className="py-4 font-medium text-white">{s.name} <span className="text-xs text-slate-400 block mt-0.5">{s.symbol}</span></td>
-                        <td className="py-4 font-semibold">₹{s.price.toFixed(2)}</td>
-                        <td className={`py-4 font-semibold ${s.change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{s.change >= 0 ? '+' : ''}{s.change} ({s.changePercent}%)</td>
-                        <td className="py-4 space-x-2">
-                          <button onClick={() => setTradeModal({ isOpen: true, type: 'BUY', stock: s })} className="bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg text-xs font-bold text-white transition shadow-sm">Buy</button>
-                          <button onClick={() => setTradeModal({ isOpen: true, type: 'SELL', stock: s })} className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-xs font-bold text-white transition shadow-sm">Sell</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                <section className="terminal-panel holdings-panel"><div className="panel-heading"><div><span className="eyebrow">MARKET DIRECTORY</span><h2>All listed assets</h2></div><span className="market-count">{stocks.length} simulated assets</span></div><div className="table-scroll"><table className="terminal-table"><thead><tr><th>COMPANY</th><th>LAST PRICE</th><th>CHANGE</th><th>TRADE</th></tr></thead><tbody>{stocks.map(s=><tr key={s.symbol}><td><b>{s.name}</b><small>{s.symbol}</small></td><td>₹{s.price.toFixed(2)}</td><td className={s.change>=0?'positive':'negative'}>{s.change>=0?'+':''}{s.change} ({s.changePercent}%)</td><td><button className="small-buy" onClick={()=>setTradeModal({isOpen:true,type:'BUY',stock:s})}>Buy</button><button className="small-sell" onClick={()=>setTradeModal({isOpen:true,type:'SELL',stock:s})}>Sell</button></td></tr>)}</tbody></table></div></section>
+              </div>;
+            })()}
 
             {/* PORTFOLIO VIEW */}
             {currentUser && currentView === 'portfolio' && (
