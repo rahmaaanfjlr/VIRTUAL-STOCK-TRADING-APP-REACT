@@ -66,7 +66,7 @@ function PriceChart({ stock }) {
 
   useEffect(() => {
     if (!hostRef.current || !bars.length) return;
-    const { createChart, CandlestickSeries, HistogramSeries } = window.__lightweightCharts || {};
+    const { createChart, CandlestickSeries, HistogramSeries } = window.LightweightCharts || {};
     if (!createChart) return;
     const chart = createChart(hostRef.current, {
       width: hostRef.current.clientWidth, height: 300,
