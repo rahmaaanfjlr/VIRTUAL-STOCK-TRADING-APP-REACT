@@ -124,7 +124,8 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [tradeModal, setTradeModal] = useState({ isOpen: false, type: null, stock: null });
   const [tradeQty, setTradeQty] = useState(1);
-  const [txFilter, setTxFilter] = useState('ALL');\n  const [selectedSymbol, setSelectedSymbol] = useState('AAPL');
+  const [txFilter, setTxFilter] = useState('ALL');
+  const [selectedSymbol, setSelectedSymbol] = useState('AAPL');
 
   useEffect(() => { localStorage.setItem('stocks', JSON.stringify(stocks)); }, [stocks]);
   useEffect(() => { localStorage.setItem('users', JSON.stringify(users)); }, [users]);
