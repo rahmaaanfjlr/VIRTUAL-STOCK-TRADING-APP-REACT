@@ -14,6 +14,100 @@ const INITIAL_STOCKS = [
   { id: 10, name: "JPMorgan Chase", symbol: "JPM", price: 198.60, change: 1.80, changePercent: 0.91 }
 ];
 
+function PriceChart({ stock }) {
+  const hostRef = React.useRef(null);
+  const [timeframe, setTimeframe] = useState('1M');
+  const [bars, setBars] = useState([]);
+  const [status, setStatus] = useState('loading');
+  const [message, setMessage] = useState('');
+  const [lastPrice, setLastPrice] = useState(null);
+  const intervals = { '1D': '5min', '1W': '30min', '1M': '1day', '1Y': '1week' };
+
+  useEffect(() => {
+    let active = true;
+    setStatus('loading');
+    setMessage('');
+    fetch(`/api/market?symbol=${encodeURIComponent(stock.symbol)}&interval=${intervals[timeframe]}`)
+      .then(async response => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Market data is unavailable.');
+        return payload;
+      })
+      .then(payload => {
+        if (!active) return;
+        const parsed = (payload.values || []).map(row => ({
+          time: (timeframe === '1M' || timeframe === '1Y') ? row.datetime.slice(0, 10) : Math.floor(new Date(row.datetime.replace(' ', 'T') + (row.datetime.includes('Z') ? '' : 'Z')).getTime() / 1000),
+          open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close),
+          volume: Number(row.volume || 0)
+        })).filter(row => Number.isFinite(row.time) && [row.open,row.high,row.low,row.close].every(Number.isFinite)).reverse();
+        if (!parsed.length) throw new Error('No chart candles were returned for this symbol and timeframe.');
+        setBars(parsed);
+        setLastPrice(parsed[parsed.length - 1].close);
+        setStatus('live');
+      })
+      .catch(error => {
+        if (!active) return;
+        const seed = stock.symbol.split('').reduce((n, c) => n + c.charCodeAt(0), 0);
+        let close = stock.price || 100;
+        const demo = Array.from({length: 70}, (_, i) => {
+          const open = close;
+          const move = Math.sin((i + seed) * .57) * close * .012 + Math.cos(i * .21) * close * .004;
+          close = Math.max(1, open + move);
+          const day = new Date(Date.now() - (69 - i) * 86400000);
+          return { time: Math.floor(day.setUTCHours(0,0,0,0) / 1000), open, high: Math.max(open,close) * 1.006, low: Math.min(open,close) * .994, close, volume: 100000 + ((i * 1937 + seed * 83) % 900000) };
+        });
+        setBars(demo);
+        setLastPrice(demo[demo.length - 1].close);
+        setMessage(error.message);
+        setStatus('demo');
+      });
+    return () => { active = false; };
+  }, [stock.symbol, timeframe]);
+
+  useEffect(() => {
+    if (!hostRef.current || !bars.length) return;
+    const { createChart, CandlestickSeries, HistogramSeries } = window.LightweightCharts || {};
+    if (!createChart) return;
+    const chart = createChart(hostRef.current, {
+      width: hostRef.current.clientWidth, height: 300,
+      layout: { background: { color: '#101712' }, textColor: '#8b9b90', fontFamily: 'DM Mono, monospace' },
+      grid: { vertLines: { color: 'rgba(200,220,204,.045)' }, horzLines: { color: 'rgba(200,220,204,.07)' } },
+      rightPriceScale: { borderColor: 'rgba(190,211,197,.12)' },
+      timeScale: { borderColor: 'rgba(190,211,197,.12)', timeVisible: timeframe === '1D' || timeframe === '1W' },
+      crosshair: { vertLine: { color: 'rgba(183,243,107,.3)' }, horzLine: { color: 'rgba(183,243,107,.3)' } }
+    });
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: '#a8ef72', downColor: '#ef786f', borderVisible: false,
+      wickUpColor: '#a8ef72', wickDownColor: '#ef786f'
+    });
+    candleSeries.setData(bars);
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: 'volume' }, priceScaleId: '',
+      color: 'rgba(168,239,114,.25)'
+    });
+    volumeSeries.setData(bars.map(bar => ({ time: bar.time, value: bar.volume, color: bar.close >= bar.open ? 'rgba(168,239,114,.22)' : 'rgba(239,120,111,.22)' })));
+    volumeSeries.priceScale().applyOptions({ scaleMargins: { top: .82, bottom: 0 } });
+    chart.timeScale().fitContent();
+    const observer = new ResizeObserver(entries => {
+      if (entries[0]) chart.applyOptions({ width: entries[0].contentRect.width });
+    });
+    observer.observe(hostRef.current);
+    return () => { observer.disconnect(); chart.remove(); };
+  }, [bars, timeframe]);
+
+  return (
+    <div className="price-chart">
+      <div className="chart-topline"><span>PRICE PERFORMANCE · USD</span><span className={status === 'live' ? 'chart-live' : 'chart-demo'}><i /> {status === 'loading' ? 'LOADING' : status === 'live' ? 'MARKET DATA' : 'DEMO DATA'}</span></div>
+      <div className="chart-toolbar">
+        <div className="timeframe-tabs">{Object.keys(intervals).map(period => <button key={period} className={timeframe === period ? 'active' : ''} onClick={() => setTimeframe(period)}>{period}</button>)}</div>
+        <span className="chart-last">{lastPrice ? lastPrice.toFixed(2) : '—'}</span>
+      </div>
+      <div ref={hostRef} className="live-chart-canvas" />
+      {status === 'demo' && <p className="chart-note">Showing illustrative demo candles. {message} Add your API key to load market data.</p>}
+      {status === 'live' && <p className="chart-note">Market data supplied by Twelve Data. Feed availability and delay depend on your API plan.</p>}
+    </div>
+  );
+}
 export default function App() {
   const [stocks, setStocks] = useState(() => JSON.parse(localStorage.getItem('stocks')) || INITIAL_STOCKS);
   const [users, setUsers] = useState(() => JSON.parse(localStorage.getItem('users')) || []);
@@ -30,7 +124,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [tradeModal, setTradeModal] = useState({ isOpen: false, type: null, stock: null });
   const [tradeQty, setTradeQty] = useState(1);
-  const [txFilter, setTxFilter] = useState('ALL');
+  const [txFilter, setTxFilter] = useState('ALL');\n  const [selectedSymbol, setSelectedSymbol] = useState('AAPL');
 
   useEffect(() => { localStorage.setItem('stocks', JSON.stringify(stocks)); }, [stocks]);
   useEffect(() => { localStorage.setItem('users', JSON.stringify(users)); }, [users]);
@@ -316,54 +410,53 @@ export default function App() {
             {currentUser && currentView === 'dashboard' && (() => {
               const stats = getPortfolioStats();
               const userTx = transactions.filter(t => t.userId === currentUser.id).slice(0, 5);
+              const featuredStock = stocks.find(s => s.symbol === selectedSymbol) || stocks[0];
+              const totalValue = currentUser.balance + stats.val;
               return (
-                <div className="space-y-8">
-                  <div className="grid grid-cols-4 gap-6">
-                    <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-md"><h3 className="text-xs text-slate-400 uppercase font-semibold tracking-wider">Wallet Balance</h3><p className="text-2xl font-bold mt-2 text-white">₹{currentUser.balance.toLocaleString('en-IN', {maximumFractionDigits:2})}</p></div>
-                    <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-md"><h3 className="text-xs text-slate-400 uppercase font-semibold tracking-wider">Portfolio Value</h3><p className="text-2xl font-bold mt-2 text-white">₹{stats.val.toLocaleString('en-IN', {maximumFractionDigits:2})}</p></div>
-                    <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-md"><h3 className="text-xs text-slate-400 uppercase font-semibold tracking-wider">Total Investment</h3><p className="text-2xl font-bold mt-2 text-white">₹{stats.inv.toLocaleString('en-IN', {maximumFractionDigits:2})}</p></div>
-                    <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-md"><h3 className="text-xs text-slate-400 uppercase font-semibold tracking-wider">Profit / Loss</h3><p className={`text-2xl font-bold mt-2 ${stats.pl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>₹{stats.pl.toLocaleString('en-IN', {maximumFractionDigits:2})}</p></div>
+                <div className="user-terminal">
+                  <div className="terminal-heading"><div><span className="eyebrow">YOUR INVESTMENT SPACE</span><h1>Good to see you, {currentUser.username}.</h1><p>Here's how your virtual portfolio is performing today.</p></div><button onClick={simulateMarket} className="market-refresh">↻ Simulate market move</button></div>
+                  <div className="portfolio-hero">
+                    <div><span className="eyebrow">TOTAL PORTFOLIO VALUE</span><div className="portfolio-total">₹{totalValue.toLocaleString('en-IN',{maximumFractionDigits:2})}</div><div className={`portfolio-change ${stats.pl >= 0 ? 'positive' : 'negative'}`}>{stats.pl >= 0 ? '↗' : '↘'} ₹{Math.abs(stats.pl).toLocaleString('en-IN',{maximumFractionDigits:2})} <span>overall unrealised P/L</span></div></div>
+                    <div className="hero-mark"><span>◈</span><small>VIRTUAL<br/>PORTFOLIO</small></div>
                   </div>
-                  <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6 shadow-md">
-                    <h2 className="text-lg font-bold mb-4 text-white">Recent Transactions</h2>
-                    <table className="w-full text-left text-sm">
-                      <thead><tr className="border-b border-slate-700 text-slate-400"><th className="pb-3">Date</th><th className="pb-3">Type</th><th className="pb-3">Symbol</th><th className="pb-3">Qty</th><th className="pb-3">Total</th></tr></thead>
-                      <tbody className="divide-y divide-slate-700/50">
-                        {userTx.length ? userTx.map(t => (
-                          <tr key={t.id} className="hover:bg-slate-700/20"><td className="py-3.5">{new Date(t.date).toLocaleDateString()}</td><td className={`py-3.5 font-bold ${t.type==='BUY'?'text-emerald-400':'text-red-400'}`}>{t.type}</td><td className="py-3.5">{t.symbol}</td><td className="py-3.5">{t.quantity}</td><td className="py-3.5">₹{t.total.toLocaleString()}</td></tr>
-                        )) : <tr><td colSpan="5" className="text-center py-6 text-slate-400">No transactions yet</td></tr>}
-                      </tbody>
-                    </table>
+                  <div className="metric-grid">
+                    <div className="metric-card"><span>AVAILABLE CASH</span><strong>₹{currentUser.balance.toLocaleString('en-IN',{maximumFractionDigits:2})}</strong><small>Ready to invest</small></div>
+                    <div className="metric-card"><span>INVESTED VALUE</span><strong>₹{stats.inv.toLocaleString('en-IN',{maximumFractionDigits:2})}</strong><small>Across your holdings</small></div>
+                    <div className="metric-card"><span>HOLDINGS VALUE</span><strong>₹{stats.val.toLocaleString('en-IN',{maximumFractionDigits:2})}</strong><small>{currentUser.portfolio.length} stocks owned</small></div>
+                    <div className="metric-card"><span>OVERALL P/L</span><strong className={stats.pl >= 0 ? 'positive' : 'negative'}>{stats.pl >= 0 ? '+' : '-'}₹{Math.abs(stats.pl).toLocaleString('en-IN',{maximumFractionDigits:2})}</strong><small>Based on simulated prices</small></div>
                   </div>
+                  <div className="terminal-columns">
+                    <section className="terminal-panel chart-panel">
+                      <div className="panel-heading"><div><span className="eyebrow">MARKET CHART</span><h2>{featuredStock.name} <small>{featuredStock.symbol}</small></h2></div><div className={featuredStock.change >= 0 ? 'positive' : 'negative'}>₹{featuredStock.price.toFixed(2)}<small className="block">{featuredStock.change >= 0 ? '+' : ''}{featuredStock.changePercent}%</small></div></div>
+                      <PriceChart stock={featuredStock}/>
+                      <div className="chart-actions"><button onClick={() => setCurrentView('market')}>Explore market ↗</button><button onClick={() => setTradeModal({isOpen:true,type:'BUY',stock:featuredStock})}>Buy {featuredStock.symbol}</button></div>
+                    </section>
+                    <section className="terminal-panel watch-panel"><div className="panel-heading"><div><span className="eyebrow">QUICK LOOK</span><h2>Market watch</h2></div><button className="text-link" onClick={() => setCurrentView('market')}>View all ↗</button></div>
+                      {stocks.slice(0,6).map(s => <button key={s.symbol} className={`watch-row ${selectedSymbol===s.symbol?'selected':''}`} onClick={() => setSelectedSymbol(s.symbol)}><span className="stock-avatar">{s.symbol.slice(0,1)}</span><span className="watch-name"><b>{s.symbol}</b><small>{s.name}</small></span><span className="watch-price">₹{s.price.toFixed(2)}<small className={s.change>=0?'positive':'negative'}>{s.change>=0?'+':''}{s.changePercent}%</small></span></button>)}
+                    </section>
+                  </div>
+                  <section className="terminal-panel holdings-panel"><div className="panel-heading"><div><span className="eyebrow">YOUR POSITIONS</span><h2>Portfolio holdings</h2></div><button className="text-link" onClick={() => setCurrentView('portfolio')}>Full portfolio ↗</button></div>
+                    {currentUser.portfolio.length ? <div className="table-scroll"><table className="terminal-table"><thead><tr><th>ASSET</th><th>SHARES</th><th>AVG. PRICE</th><th>MARKET VALUE</th><th>PROFIT / LOSS</th></tr></thead><tbody>{currentUser.portfolio.map(h=>{const st=stocks.find(s=>s.symbol===h.symbol);const price=st?st.price:h.avgPrice;const pl=(price-h.avgPrice)*h.quantity;return <tr key={h.symbol}><td><b>{h.symbol}</b><small>{h.name}</small></td><td>{h.quantity}</td><td>₹{h.avgPrice.toFixed(2)}</td><td>₹{(price*h.quantity).toLocaleString('en-IN',{maximumFractionDigits:2})}</td><td className={pl>=0?'positive':'negative'}>{pl>=0?'+':'-'}₹{Math.abs(pl).toFixed(2)}</td></tr>})}</tbody></table></div> : <div className="empty-state">Your portfolio is waiting for its first investment. <button onClick={()=>setCurrentView('market')}>Browse stocks ↗</button></div>}
+                  </section>
+                  <section className="terminal-panel holdings-panel"><div className="panel-heading"><div><span className="eyebrow">LATEST ACTIVITY</span><h2>Recent transactions</h2></div><button className="text-link" onClick={()=>setCurrentView('transactions')}>History ↗</button></div>
+                    {userTx.length ? <div className="table-scroll"><table className="terminal-table"><thead><tr><th>DATE</th><th>TYPE</th><th>STOCK</th><th>QUANTITY</th><th>TOTAL</th></tr></thead><tbody>{userTx.map(t=><tr key={t.id}><td>{new Date(t.date).toLocaleDateString()}</td><td className={t.type==='BUY'?'positive':'negative'}>{t.type}</td><td>{t.symbol}</td><td>{t.quantity}</td><td>₹{t.total.toLocaleString('en-IN')}</td></tr>)}</tbody></table></div>:<div className="empty-state">No trades yet. Your activity will appear here.</div>}
+                  </section>
                 </div>
               );
             })()}
 
             {/* MARKET VIEW */}
-            {currentUser && currentView === 'market' && (
-              <div className="bg-slate-800 rounded-2xl border border-slate-700 p-6 shadow-md">
-                <div className="flex justify-between items-center mb-6">
-                  <h2 className="text-xl font-bold text-white">Simulated Market Watch</h2>
-                  <button onClick={simulateMarket} className="bg-blue-600 hover:bg-blue-700 px-5 py-2.5 rounded-xl text-sm font-semibold transition text-white shadow-md shadow-blue-600/20">Simulate Price Shift</button>
+            {currentUser && currentView === 'market' && (() => {
+              const activeStock = stocks.find(s => s.symbol === selectedSymbol) || stocks[0];
+              return <div className="user-terminal">
+                <div className="terminal-heading"><div><span className="eyebrow">EXPLORE THE MARKET</span><h1>Market overview</h1><p>Study simulated price movements and practise your trading decisions.</p></div><button onClick={simulateMarket} className="market-refresh">↻ Simulate price shift</button></div>
+                <div className="terminal-columns market-columns">
+                  <section className="terminal-panel chart-panel"><div className="panel-heading"><div><span className="eyebrow">SELECTED ASSET</span><h2>{activeStock.name} <small>{activeStock.symbol}</small></h2></div><div className="market-price">₹{activeStock.price.toFixed(2)}<small className={activeStock.change>=0?'positive':'negative'}>{activeStock.change>=0?'+':''}{activeStock.change} ({activeStock.changePercent}%)</small></div></div><PriceChart stock={activeStock}/><div className="trade-actions"><button onClick={()=>setTradeModal({isOpen:true,type:'BUY',stock:activeStock})}>Buy {activeStock.symbol}</button><button onClick={()=>setTradeModal({isOpen:true,type:'SELL',stock:activeStock})}>Sell {activeStock.symbol}</button></div></section>
+                  <section className="terminal-panel watch-panel"><div className="panel-heading"><div><span className="eyebrow">WATCHLIST</span><h2>All stocks</h2></div></div>{stocks.map(s=><button key={s.symbol} className={`watch-row ${selectedSymbol===s.symbol?'selected':''}`} onClick={()=>setSelectedSymbol(s.symbol)}><span className="stock-avatar">{s.symbol.slice(0,1)}</span><span className="watch-name"><b>{s.symbol}</b><small>{s.name}</small></span><span className="watch-price">₹{s.price.toFixed(2)}<small className={s.change>=0?'positive':'negative'}>{s.change>=0?'+':''}{s.changePercent}%</small></span></button>)}</section>
                 </div>
-                <table className="w-full text-left text-sm">
-                  <thead><tr className="border-b border-slate-700 text-slate-400"><th className="pb-3">Company</th><th className="pb-3">Price</th><th className="pb-3">Change</th><th className="pb-3">Action</th></tr></thead>
-                  <tbody className="divide-y divide-slate-700/50">
-                    {stocks.map(s => (
-                      <tr key={s.id} className="hover:bg-slate-700/20">
-                        <td className="py-4 font-medium text-white">{s.name} <span className="text-xs text-slate-400 block mt-0.5">{s.symbol}</span></td>
-                        <td className="py-4 font-semibold">₹{s.price.toFixed(2)}</td>
-                        <td className={`py-4 font-semibold ${s.change >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{s.change >= 0 ? '+' : ''}{s.change} ({s.changePercent}%)</td>
-                        <td className="py-4 space-x-2">
-                          <button onClick={() => setTradeModal({ isOpen: true, type: 'BUY', stock: s })} className="bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg text-xs font-bold text-white transition shadow-sm">Buy</button>
-                          <button onClick={() => setTradeModal({ isOpen: true, type: 'SELL', stock: s })} className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-xs font-bold text-white transition shadow-sm">Sell</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                <section className="terminal-panel holdings-panel"><div className="panel-heading"><div><span className="eyebrow">MARKET DIRECTORY</span><h2>All listed assets</h2></div><span className="market-count">{stocks.length} simulated assets</span></div><div className="table-scroll"><table className="terminal-table"><thead><tr><th>COMPANY</th><th>LAST PRICE</th><th>CHANGE</th><th>TRADE</th></tr></thead><tbody>{stocks.map(s=><tr key={s.symbol}><td><b>{s.name}</b><small>{s.symbol}</small></td><td>₹{s.price.toFixed(2)}</td><td className={s.change>=0?'positive':'negative'}>{s.change>=0?'+':''}{s.change} ({s.changePercent}%)</td><td><button className="small-buy" onClick={()=>setTradeModal({isOpen:true,type:'BUY',stock:s})}>Buy</button><button className="small-sell" onClick={()=>setTradeModal({isOpen:true,type:'SELL',stock:s})}>Sell</button></td></tr>)}</tbody></table></div></section>
+              </div>;
+            })()}
 
             {/* PORTFOLIO VIEW */}
             {currentUser && currentView === 'portfolio' && (
