@@ -15,31 +15,99 @@ const INITIAL_STOCKS = [
 ];
 
 function PriceChart({ stock }) {
-  const candles = Array.from({ length: 38 }, (_, i) => {
-    const wave = Math.sin(i * 0.62) * 7 + Math.sin(i * 0.19) * 10 + (i - 18) * (stock.change >= 0 ? 0.24 : -0.18);
-    const open = 50 + wave + Math.sin(i * 1.7) * 3;
-    const close = open + Math.sin(i * 1.31 + 0.7) * 6 + (stock.change >= 0 ? 1.1 : -0.8);
-    return { x: 18 + i * 15, open, close, high: Math.max(open, close) + 2 + (i % 4), low: Math.min(open, close) - 2 - (i % 3), volume: 10 + ((i * 17) % 29) };
-  });
-  const y = value => 154 - value * 1.55;
+  const hostRef = React.useRef(null);
+  const [timeframe, setTimeframe] = useState('1M');
+  const [bars, setBars] = useState([]);
+  const [status, setStatus] = useState('loading');
+  const [message, setMessage] = useState('');
+  const [lastPrice, setLastPrice] = useState(null);
+  const intervals = { '1D': '5min', '1W': '30min', '1M': '1day', '1Y': '1week' };
+
+  useEffect(() => {
+    let active = true;
+    setStatus('loading');
+    setMessage('');
+    fetch(`/api/market?symbol=${encodeURIComponent(stock.symbol)}&interval=${intervals[timeframe]}`)
+      .then(async response => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Market data is unavailable.');
+        return payload;
+      })
+      .then(payload => {
+        if (!active) return;
+        const parsed = (payload.values || []).map(row => ({
+          time: Math.floor(new Date(row.datetime.replace(' ', 'T') + (row.datetime.includes('Z') ? '' : 'Z')).getTime() / 1000),
+          open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close),
+          volume: Number(row.volume || 0)
+        })).filter(row => Number.isFinite(row.time) && [row.open,row.high,row.low,row.close].every(Number.isFinite)).reverse();
+        if (!parsed.length) throw new Error('No chart candles were returned for this symbol and timeframe.');
+        setBars(parsed);
+        setLastPrice(parsed[parsed.length - 1].close);
+        setStatus('live');
+      })
+      .catch(error => {
+        if (!active) return;
+        const seed = stock.symbol.split('').reduce((n, c) => n + c.charCodeAt(0), 0);
+        let close = stock.price || 100;
+        const demo = Array.from({length: 70}, (_, i) => {
+          const open = close;
+          const move = Math.sin((i + seed) * .57) * close * .012 + Math.cos(i * .21) * close * .004;
+          close = Math.max(1, open + move);
+          const day = new Date(Date.now() - (69 - i) * 86400000);
+          return { time: Math.floor(day.setUTCHours(0,0,0,0) / 1000), open, high: Math.max(open,close) * 1.006, low: Math.min(open,close) * .994, close, volume: 100000 + ((i * 1937 + seed * 83) % 900000) };
+        });
+        setBars(demo);
+        setLastPrice(demo[demo.length - 1].close);
+        setMessage(error.message);
+        setStatus('demo');
+      });
+    return () => { active = false; };
+  }, [stock.symbol, timeframe]);
+
+  useEffect(() => {
+    if (!hostRef.current || !bars.length) return;
+    const { createChart, CandlestickSeries, HistogramSeries } = window.__lightweightCharts || {};
+    if (!createChart) return;
+    const chart = createChart(hostRef.current, {
+      width: hostRef.current.clientWidth, height: 300,
+      layout: { background: { color: '#101712' }, textColor: '#8b9b90', fontFamily: 'DM Mono, monospace' },
+      grid: { vertLines: { color: 'rgba(200,220,204,.045)' }, horzLines: { color: 'rgba(200,220,204,.07)' } },
+      rightPriceScale: { borderColor: 'rgba(190,211,197,.12)' },
+      timeScale: { borderColor: 'rgba(190,211,197,.12)', timeVisible: timeframe === '1D' || timeframe === '1W' },
+      crosshair: { vertLine: { color: 'rgba(183,243,107,.3)' }, horzLine: { color: 'rgba(183,243,107,.3)' } }
+    });
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: '#a8ef72', downColor: '#ef786f', borderVisible: false,
+      wickUpColor: '#a8ef72', wickDownColor: '#ef786f'
+    });
+    candleSeries.setData(bars);
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: 'volume' }, priceScaleId: '',
+      color: 'rgba(168,239,114,.25)'
+    });
+    volumeSeries.setData(bars.map(bar => ({ time: bar.time, value: bar.volume, color: bar.close >= bar.open ? 'rgba(168,239,114,.22)' : 'rgba(239,120,111,.22)' })));
+    volumeSeries.priceScale().applyOptions({ scaleMargins: { top: .82, bottom: 0 } });
+    chart.timeScale().fitContent();
+    const observer = new ResizeObserver(entries => {
+      if (entries[0]) chart.applyOptions({ width: entries[0].contentRect.width });
+    });
+    observer.observe(hostRef.current);
+    return () => { observer.disconnect(); chart.remove(); };
+  }, [bars, timeframe]);
+
   return (
     <div className="price-chart">
-      <div className="chart-topline"><span>PRICE PERFORMANCE</span><span className="chart-live"><i /> SIMULATED</span></div>
-      <svg viewBox="0 0 590 220" role="img" aria-label={`${stock.symbol} simulated candlestick chart`} className="candle-svg">
-        {[35, 75, 115, 155].map(v => <g key={v}><line x1="8" x2="575" y1={v} y2={v} className="chart-grid"/><text x="580" y={v + 3} className="chart-axis">{(stock.price * (1.12 - v / 900)).toFixed(0)}</text></g>)}
-        {candles.map((c, i) => {
-          const up = c.close >= c.open;
-          const color = up ? "#a8ef72" : "#ef786f";
-          return <g key={i}><line x1={c.x} x2={c.x} y1={y(c.high)} y2={y(c.low)} stroke={color} strokeWidth="1.3"/><rect x={c.x - 4} y={y(Math.max(c.open,c.close))} width="8" height={Math.max(3,Math.abs(y(c.open)-y(c.close)))} rx="1" fill={color}/><rect x={c.x - 4} y={184 - c.volume} width="8" height={c.volume} fill={color} opacity=".28"/></g>;
-        })}
-        <path d="M18 118 C90 105 120 136 180 102 S275 128 330 88 S425 108 485 65 S540 76 570 48" fill="none" stroke="#a8ef72" strokeWidth="1.5" opacity=".18"/>
-        <text x="12" y="211" className="chart-axis">APR 01</text><text x="275" y="211" className="chart-axis">APR 15</text><text x="515" y="211" className="chart-axis">APR 30</text>
-      </svg>
-      <div className="chart-legend"><span><i className="legend-up"/> Bullish</span><span><i className="legend-down"/> Bearish</span><span>Volume · simulated</span></div>
+      <div className="chart-topline"><span>PRICE PERFORMANCE · USD</span><span className={status === 'live' ? 'chart-live' : 'chart-demo'}><i /> {status === 'loading' ? 'LOADING' : status === 'live' ? 'MARKET DATA' : 'DEMO DATA'}</span></div>
+      <div className="chart-toolbar">
+        <div className="timeframe-tabs">{Object.keys(intervals).map(period => <button key={period} className={timeframe === period ? 'active' : ''} onClick={() => setTimeframe(period)}>{period}</button>)}</div>
+        <span className="chart-last">{lastPrice ? lastPrice.toFixed(2) : '—'}</span>
+      </div>
+      <div ref={hostRef} className="live-chart-canvas" />
+      {status === 'demo' && <p className="chart-note">Showing illustrative demo candles. {message} Add your API key to load market data.</p>}
+      {status === 'live' && <p className="chart-note">Market data supplied by Twelve Data. Feed availability and delay depend on your API plan.</p>}
     </div>
   );
 }
-
 export default function App() {
   const [stocks, setStocks] = useState(() => JSON.parse(localStorage.getItem('stocks')) || INITIAL_STOCKS);
   const [users, setUsers] = useState(() => JSON.parse(localStorage.getItem('users')) || []);
